@@ -64,3 +64,13 @@ alias ll='ls -l --almost-all --file-type'
 # Nice to have, often set by default in many Linux distributions
 alias grep='grep --color=auto'
 alias diff='diff --color=auto'
+
+# ╔═════════════╗
+#  PIP/PIPENV/UV
+# ╚═════════════╝
+
+# Force pip to only run inside a virtual environment
+export PIP_REQUIRE_VIRTUALENV=true
+
+# Make Pipenv create virtual environments inside the project folder (.venv/) instead of using some global location
+export PIPENV_VENV_IN_PROJECT=1
