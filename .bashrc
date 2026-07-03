@@ -53,3 +53,14 @@ __path_append() {
 # invoked when you use the command "python" (i.e. A custon Python shim)
 
 #__path_prepend "/home/<username>/python_symlink"
+
+# ╔═══════╗
+#  ALIASES
+# ╚═══════╝
+
+# My preferred "ls" functionality
+alias ll='ls -l --almost-all --file-type'
+
+# Nice to have, often set by default in many Linux distributions
+alias grep='grep --color=auto'
+alias diff='diff --color=auto'
