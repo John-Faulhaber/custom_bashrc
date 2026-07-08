@@ -172,3 +172,78 @@ systembarf() {
     printf '\n%s== lsusb ==%s\n\n' "$cyan" "$reset"
     lsusb
 }
+
+# ╔═══╗
+#  PS1
+# ╚═══╝
+
+
+# Colors
+RED="\[\033[31m\]"
+GREEN="\[\033[32m\]"
+GRAY="\[\033[38;2;150;150;150m\]"
+GIT_ORANGE="\[\033[38;2;241;78;50m\]" #f14e32
+RESET="\[\033[0m\]"
+
+# Helper to determine whether the user is inside a git repository.
+__inside_git_repo() { git rev-parse --is-inside-work-tree >/dev/null 2>&1; }
+
+# Take an exit code and print a colored success/failure icon based on the value. Green smiley = Succeeded. Red smiley = Failed.
+command_status_icon() { local exit_code=$1; [[ $exit_code -eq 0 ]] && printf '%s' "${GREEN}${RESET}" || printf '%s' "${RED}${RESET}"; }
+
+# Print a colored icon based on whether a Python virtual environment is active. Green shield = Active. Red shield = Vulnerable.
+venv_status_icon() { [[ -n "$VIRTUAL_ENV" ]] && printf '%s' "${GREEN}󰒙${RESET}" || printf '%s' "${RED}󰫝${RESET}"; }
+
+# Print the active virtual environment name, if one is active.
+venv_name() { [[ -n "$VIRTUAL_ENV" ]] && printf '%s' "${RESET}(${VIRTUAL_ENV##*/})${RESET} "; }
+
+# Print a green directory with the Git logo when inside a work tree, otherwise red.
+git_status_icon() { __inside_git_repo && printf '%s' "${GREEN}${RESET}" || printf '%s' "${RED}${RESET}"; }
+
+# Print the current Git ref as plain text for prompt display.
+# Orange color is added separately to assist with width determination.
+git_status_string() {
+    local ref git_ref_icon
+
+    # Early return if not inside a git repository
+    __inside_git_repo || return
+
+    # Checked out reference is a branch
+    if ref=$(git symbolic-ref --quiet --short HEAD 2>/dev/null); then
+        git_ref_icon="󰘬"
+
+    # Checked out reference is a tag
+    elif ref=$(git describe --tags --exact-match HEAD 2>/dev/null); then
+        git_ref_icon=""
+
+    # Checked out reference is a detached commit
+    elif ref=$(git rev-parse --short HEAD 2>/dev/null); then
+        git_ref_icon=""
+
+    # Unknown git state
+    else
+        git_ref_icon=""
+        ref="unknown"
+    fi
+
+    printf '%s %s' "$git_ref_icon" "$ref"
+}
+
+# If a file titled "python" exists on PATH, print a green Python logo icon and label it with the Python version if possible.
+# Print red Python logo for all other cases.
+# This is dependent on the "python" file in question either being a Python binary/executable, or a symlink pointing to one.
+python_status_icon() {
+    local python_version
+
+    # Attempt to determine Python version by calling "python" and early exit if it fails
+    python_version=$(python -V 2>/dev/null) || {
+        printf '%s' "${RED}󰌠${RESET}"
+        return
+    }
+
+    # If the above succeeds, strip the "Python" from "Python #.#.#"
+    python_version=${python_version#Python }
+
+    # Print green Python logo with version returned by the associated Python interpreter
+    printf '%s %s%s%s' "${GREEN}󰌠${RESET}" "${GRAY}" "$python_version" "${RESET}"
+}
