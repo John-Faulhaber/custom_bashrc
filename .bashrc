@@ -32,7 +32,7 @@ esac
 
 # Prepend $PATH with a directory ($1) only if the new path is not already in $PATH
 # If $PATH is empty, don't include the ":" --> Bash parameter expansion syntax ${variable:+replacement}
-# If variable is set and not empty, use  replacement. Otherwise, use nothing.
+# If variable is set and not empty, use replacement. Otherwise, use nothing.
 __path_prepend() {
     case ":$PATH:" in
         *":$1:"*) ;;
@@ -49,8 +49,9 @@ __path_append() {
 }
 
 # Example usage - creating a symlink titled "python" pointing to your preferred Python binary (executable),
-# and prepending the dirictory it's under (/python_symlink/) to your $PATH so it becomes the Python interpreter
-# invoked when you use the command "python" (i.e. A custon Python shim)
+# and prepending the directory it's under (/python_symlink/) to your $PATH so it becomes the Python interpreter
+# invoked when you use the command "python" (i.e. A custom Python shim)
+# (Call these within the .bashrc itself)
 
 #__path_prepend "/home/<username>/python_symlink"
 
@@ -177,12 +178,11 @@ systembarf() {
 #  PS1
 # ╚═══╝
 
-
 # Colors
 RED="\[\033[31m\]"
 GREEN="\[\033[32m\]"
-GRAY="\[\033[38;2;150;150;150m\]"
-GIT_ORANGE="\[\033[38;2;241;78;50m\]" #f14e32
+GRAY="\[\033[38;2;150;150;150m\]"  # Subtle gray for command timer and Python version display
+GIT_ORANGE="\[\033[38;2;241;78;50m\]"  # f14e32  Official Git orange
 RESET="\[\033[0m\]"
 
 # Helper to determine whether the user is inside a git repository.
@@ -247,3 +247,191 @@ python_status_icon() {
     # Print green Python logo with version returned by the associated Python interpreter
     printf '%s %s%s%s' "${GREEN}󰌠${RESET}" "${GRAY}" "$python_version" "${RESET}"
 }
+
+# Take a time duration in seconds and convert it to a nice string. e.g. 5 -> 5s, 266453 -> 3d 2h 53s
+__timer_formatter() {
+    local duration_seconds=$1  # Integer (s) gets passed in
+
+    local days hours minutes seconds
+    local formatted_duration=()
+
+    # Handle sub-second resolution gracefully.
+    # This is mostly to make the user-experience more predictable than using finer granularity and
+    # having repeated short commands yield different times every run.
+    # print "<1s" if duration is < 1s
+    if (( duration_seconds < 1 )); then
+        printf '%s' '<1s'
+        return
+    fi
+
+    days=$(( duration_seconds / 86400 ))
+    hours=$(( duration_seconds / 3600 % 24 ))
+    minutes=$(( duration_seconds / 60 % 60 ))
+    seconds=$(( duration_seconds % 60 ))
+
+    (( days )) && formatted_duration+=("${days}d")
+    (( hours )) && formatted_duration+=("${hours}h")
+    (( minutes )) && formatted_duration+=("${minutes}m")
+    (( seconds )) && formatted_duration+=("${seconds}s")
+
+    printf '%s' "${formatted_duration[*]}"
+}
+
+# Determine padding needed to right-align the command-timer string on the first prompt line.
+__timer_padding() {
+    local prompt_string=$1  # The first line of the PS1 prompt itself
+    local timer_string=$2  # The literal timer string
+
+    local prompt_width=${#prompt_string}
+    local timer_width=${#timer_string}
+    local terminal_width=${COLUMNS:-80}  # Fallback to 80 default
+    local padding
+
+    # Terminal width - (prompt width + timer string width) = padding needed
+    padding=$((terminal_width - prompt_width - timer_width))
+
+    # If (prompt + timer) is equal to or greater than width of terminal, force the padding to be one space regardless
+    (( padding < 1 )) && padding=1
+
+    printf '%*s' "$padding" ''
+}
+
+# Assemble the actual PS1 prompt from the various components
+__build_prompt() {
+    local exit_code=$1  # Exit code to pass to command_status_icon function - intended to be the user's previous command
+    local timer_string=$2  # Formatted string of some time duration - intended to be the duration of the user's previous command
+
+    local cwd
+    local datetime
+    local git_string
+    local padding
+    local prompt_line_1
+    local prompt_line_2
+
+    # Mimic PS1 escape sequence behavior manually (e.g. \w=cwd) in order to count the resultant string width(s)
+    # The built-in escape sequences only render upon prompt display. If the built-in escape sequences are used, padding for
+    # the timer string would not be possible to calculate.
+    datetime=$(date "+%m/%d/%Y %H:%M")
+    cwd=$PWD
+    case $cwd in
+        "$HOME") cwd='~' ;;
+        "$HOME"/*) cwd="~/${cwd#"$HOME"/}" ;;
+    esac
+
+    # Cache this for multiple invocations
+    git_string=$(git_status_string)
+
+    # Pass the various strings into the __timer_padding function to determine padding
+    padding=$(__timer_padding "${USER} ${datetime} ${cwd} ${git_string}" "$timer_string")
+
+    # PS1 line 1 - user, date, time, cwd, git ref (timer string added below)
+    prompt_line_1="${USER} ${datetime} ${cwd} ${GIT_ORANGE}${git_string}${RESET}"
+
+    # PS1 line 2 - venv name, previous command status icon, venv status icon, git status icon, and python status icon and version
+    prompt_line_2="$(venv_name)$(command_status_icon "$exit_code") $(venv_status_icon) $(git_status_icon) $(python_status_icon) "
+
+   # Stack the PS1 lines 1 & 2 together, and add the timer string to line 1 with appropriate padding
+   # Start with a newline to space user-prompt away from prior output
+    PS1=$'\n'"${prompt_line_1}${padding}${GRAY}${timer_string}${RESET}"$'\n'"${prompt_line_2}"
+}
+
+# ╔═════════════╗
+#  TIMER BACKEND
+# ╚═════════════╝
+
+# Helper function to get current Unix timestamp (s)
+__current_unix_timestamp() {
+    date +%s
+}
+
+# THIS FUNCTION IS EXECUTED BY "trap '__get_start_timestamp' DEBUG"
+# Capture a start timestamp for commands.
+# CLAIM: If global variable __ready_for_user_command = 1, the command that fired the DEBUG trap is a user command, and we want to time it.
+__get_start_timestamp() {
+    # Capture exit status of the previous command
+    local exit_status=$?
+
+    # If global variable __ready_for_user_command = 1, capture a "start" timestamp
+    # If global variable __ready_for_user_command = 0, do nothing
+    if (( __ready_for_user_command )); then
+        __ready_for_user_command=0  # Reset to 0
+        user_command_start_timestamp=$(__current_unix_timestamp)
+    fi
+
+    # Return previous command's exit status as __get_start_timestamp()'s exit status to preserve the user's ability to rely on the exist status variable ($?).
+    # The DEBUG trap will often, and every command inside __get_start_timestamp() will update the value of "$?".
+    # e.g. The simplest demonstration of this is if a user calls "echo $?", the "echo" in "echo $?" will trip the DEBUG trap, and thus when "$?" actually prints, it may show
+    # an erroneous exit status relative to the user's needs/expectations.
+    return "$exit_status"
+}
+
+# Capture a stop timestamp and calculate the difference with global variable "user_command_start_timestamp" if possible
+# Sets global variable "command_duration_string"
+__compute_duration() {
+    # If global variable "user_command_start_timestamp" is NOT empty, take a current timestamp and calculate the difference.
+    # Feed the result into __timer_formatter().
+    # Otherwise, (.bashrc freshly source'd, etc.), set the duration value to "N/A"
+    if [[ -n $user_command_start_timestamp ]]; then
+        command_duration_string=$(__timer_formatter "$(($(__current_unix_timestamp) - user_command_start_timestamp))")
+
+        # Reset the start timestamp to empty
+        user_command_start_timestamp=
+
+    # If global variable "user_command_start_timestamp" IS empty, set the duration value to "N/A"
+    else
+        command_duration_string='N/A'
+    fi
+}
+
+# ╔══════════╗
+#  ENTRYPOINT
+# ╚══════════╝
+
+# Define the PROMPT_COMMAND hook
+__prompt_command() {
+    # Capture exit status of the previous command
+    local exit_code=$?
+
+    # Set global variable "command_duration_string"
+    __compute_duration
+
+    # Build and render the PS1 user-prompt
+    __build_prompt "$exit_code" "$command_duration_string"
+
+    # After the user-prompt renders, bash is waiting for the user to type a command
+    __ready_for_user_command=1
+
+    return "$exit_code"
+}
+
+# Instantiate a "start" timestamp variable
+# When .bashrc is sourced, start with no recorded command start time
+user_command_start_timestamp=
+
+# This represents whether bash is waiting for the user to type a command, and is used by the timer feature.
+# Initialize this to "0" when .bashrc is sourced.
+# This is set to "1" immediately after the user-prompt renders.
+# This gets set back to "zero" when the user executes a command.
+__ready_for_user_command=0
+
+# Turn off parameter expansion, command substitution, arithmetic expansion, and quote removal after being expanded.
+# We are building the user-prompt manually and take care of this ourselves.
+shopt -u promptvars
+
+# Register the PROMPT_COMMAND hook
+# WARNING: This completely overrides anything that previously adjusted PROMPT_COMMAND
+PROMPT_COMMAND=__prompt_command
+
+# Register DEBUG trap to call __get_start_timestamp()
+# This will execute __get_start_timestamp() before every:
+# simple command
+# for command
+# case command
+# select command
+# (( arithmetic command
+# [[ conditional command
+# arithmetic for command
+# and before the first command executes in a shell function.
+# Namely, this includes any command a user may run - the command we want to time
+# https://www.gnu.org/software/bash/manual/bash.html#index-trap
+trap '__get_start_timestamp' DEBUG
