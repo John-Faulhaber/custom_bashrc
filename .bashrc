@@ -59,7 +59,7 @@ __path_append() {
 #  ALIASES
 # ╚═══════╝
 
-# My preferred "ls" functionality
+# My preferred `ls` functionality
 alias ll='ls -l --almost-all --file-type'
 
 # Nice to have, often set by default in many Linux distributions
@@ -105,11 +105,24 @@ groot() {
     cd "$root"
 }
 
-# Show disk usage for all items in the current directory from largest to smallest
-# Does not include files starting with two dots (e.g. ..foo)
-sizes() {
-    du --summarize --human-readable -- * .[^.]* 2>/dev/null | sort --human-numeric-sort --reverse
-}
+# Show disk usage for all items in the current directory from largest to smallest.
+# Run in a subshell so toggling `dotglob` and `nullglob` remains local.
+sizes() (
+    # Make `*` include filenames beginning with a dot without including the "special directory entires" `.` and `..`.
+    shopt -s dotglob
+
+    # If `*` matches no files, expand it to zero arguments instead of passing the literal string `*`
+    shopt -s nullglob
+
+    # Build array out of what `*` returns
+    local items=( * )
+
+    # If the current directory contains no items, return successfully without invoking `du`.
+    ((${#items[@]})) || return 0
+
+    du --summarize --human-readable -- "${items[@]}" |
+        sort --human-numeric-sort --reverse
+)
 
 # Print a variety of system information
 # Descriptions derived from man pages
@@ -200,7 +213,7 @@ venv_name() { [[ -n "$VIRTUAL_ENV" ]] && printf '%s' "${RESET}(${VIRTUAL_ENV##*/
 # Print a green directory with the Git logo when inside a work tree, otherwise red.
 git_status_icon() { __inside_git_repo && printf '%s' "${GREEN}${RESET}" || printf '%s' "${RED}${RESET}"; }
 
-# Print the current Git ref as plain text for prompt display.
+# Print the branch, tag, or commit currently identified by Git HEAD.
 # Orange color is added separately to assist with width determination.
 git_status_string() {
     local ref git_ref_icon
@@ -208,15 +221,15 @@ git_status_string() {
     # Early return if not inside a git repository
     __inside_git_repo || return
 
-    # Checked out reference is a branch
+    # HEAD is a symbolic reference to a branch (and the branch points to a commit)
     if ref=$(git symbolic-ref --quiet --short HEAD 2>/dev/null); then
         git_ref_icon="󰘬"
 
-    # Checked out reference is a tag
+    # HEAD is detached and points to a tagged commit
     elif ref=$(git describe --tags --exact-match HEAD 2>/dev/null); then
         git_ref_icon=""
 
-    # Checked out reference is a detached commit
+    # HEAD is detached and points to an untagged commit
     elif ref=$(git rev-parse --short HEAD 2>/dev/null); then
         git_ref_icon=""
 
